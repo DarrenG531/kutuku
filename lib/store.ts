@@ -1,0 +1,205 @@
+'use client';
+
+import { createClient } from '@/lib/supabase/client';
+import { KutuGroup, Member, Round, Payment } from './types';
+import { format, addMonths } from 'date-fns';
+import { v4 as uuidv4 } from 'uuid';
+
+// ─── Auth ──────────────────────────────────────────────────────────────────
+
+export async function getCurrentUser() {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', user.id)
+    .single();
+
+  if (!profile) return null;
+  return { id: profile.id, name: profile.name, email: user.email!, phone: profile.phone, createdAt: profile.created_at };
+}
+
+export async function signOut() {
+  const supabase = createClient();
+  await supabase.auth.signOut();
+}
+
+// ─── Groups ────────────────────────────────────────────────────────────────
+
+export async function getUserGroups(userId: string): Promise<KutuGroup[]> {
+  const supabase = createClient();
+
+  const { data: memberRows } = await supabase
+    .from('members')
+    .select('group_id')
+    .eq('user_id', userId);
+
+  const groupIds = memberRows?.map((m) => m.group_id) ?? [];
+
+  const { data: groups } = await supabase
+    .from('kutu_groups')
+    .select('*')
+    .or(`created_by.eq.${userId},id.in.(${groupIds.join(',') || 'null'})`);
+
+  if (!groups?.length) return [];
+  return Promise.all(groups.map((g) => hydrateGroup(g)));
+}
+
+export async function getGroupById(id: string): Promise<KutuGroup | null> {
+  const supabase = createClient();
+  const { data: g } = await supabase.from('kutu_groups').select('*').eq('id', id).single();
+  if (!g) return null;
+  return hydrateGroup(g);
+}
+
+async function hydrateGroup(g: Record<string, unknown>): Promise<KutuGroup> {
+  const supabase = createClient();
+
+  const { data: members } = await supabase
+    .from('members')
+    .select('*')
+    .eq('group_id', g.id as string)
+    .order('position');
+
+  const { data: rounds } = await supabase
+    .from('rounds')
+    .select('*')
+    .eq('group_id', g.id as string)
+    .order('round_number');
+
+  const roundIds = rounds?.map((r) => r.id) ?? [];
+  const { data: payments } = roundIds.length
+    ? await supabase.from('payments').select('*').in('round_id', roundIds)
+    : { data: [] };
+
+  const mappedMembers: Member[] = (members ?? []).map((m) => ({
+    id: m.id,
+    userId: m.user_id,
+    name: m.name,
+    phone: m.phone,
+    position: m.position,
+    joinedAt: m.joined_at,
+  }));
+
+  const mappedRounds: Round[] = (rounds ?? []).map((r) => ({
+    id: r.id,
+    roundNumber: r.round_number,
+    month: r.month,
+    receiverId: r.receiver_id,
+    receiverName: r.receiver_name,
+    status: r.status,
+    payments: (payments ?? [])
+      .filter((p) => p.round_id === r.id)
+      .map((p) => ({
+        id: p.id,
+        memberId: p.member_id,
+        memberName: p.member_name,
+        roundId: p.round_id,
+        amount: p.amount,
+        status: p.status,
+        method: p.method,
+        reference: p.reference,
+        paidAt: p.paid_at,
+      })),
+  }));
+
+  return {
+    id: g.id as string,
+    name: g.name as string,
+    description: g.description as string | undefined,
+    monthlyAmount: g.monthly_amount as number,
+    totalSlots: g.total_slots as number,
+    startDate: g.start_date as string,
+    payoutOrder: g.payout_order as 'fixed' | 'random',
+    organizerFeeType: g.organizer_fee_type as 'none' | 'flat' | 'percentage',
+    organizerFeeValue: g.organizer_fee_value as number,
+    createdBy: g.created_by as string,
+    createdByName: g.created_by_name as string,
+    members: mappedMembers,
+    rounds: mappedRounds,
+    status: g.status as 'active' | 'completed' | 'pending',
+    createdAt: g.created_at as string,
+  };
+}
+
+export async function saveGroup(group: KutuGroup): Promise<void> {
+  const supabase = createClient();
+
+  await supabase.from('kutu_groups').upsert({
+    id: group.id,
+    name: group.name,
+    description: group.description,
+    monthly_amount: group.monthlyAmount,
+    total_slots: group.totalSlots,
+    start_date: group.startDate,
+    payout_order: group.payoutOrder,
+    organizer_fee_type: group.organizerFeeType,
+    organizer_fee_value: group.organizerFeeValue,
+    created_by: group.createdBy,
+    created_by_name: group.createdByName,
+    status: group.status,
+  });
+
+  // Upsert members
+  if (group.members.length) {
+    await supabase.from('members').upsert(
+      group.members.map((m) => ({
+        id: m.id,
+        group_id: group.id,
+        user_id: m.userId,
+        name: m.name,
+        phone: m.phone ?? null,
+        position: m.position,
+      }))
+    );
+  }
+
+  // Upsert rounds + payments
+  for (const round of group.rounds) {
+    await supabase.from('rounds').upsert({
+      id: round.id,
+      group_id: group.id,
+      round_number: round.roundNumber,
+      month: round.month,
+      receiver_id: round.receiverId,
+      receiver_name: round.receiverName,
+      status: round.status,
+    });
+
+    if (round.payments.length) {
+      await supabase.from('payments').upsert(
+        round.payments.map((p) => ({
+          id: p.id,
+          round_id: round.id,
+          member_id: p.memberId,
+          member_name: p.memberName,
+          amount: p.amount,
+          status: p.status,
+          method: p.method ?? null,
+          reference: p.reference ?? null,
+          paid_at: p.paidAt ?? null,
+        }))
+      );
+    }
+  }
+}
+
+export async function deleteGroup(id: string): Promise<void> {
+  const supabase = createClient();
+  await supabase.from('kutu_groups').delete().eq('id', id);
+}
+
+export async function updatePaymentStatus(
+  paymentId: string,
+  status: Payment['status'],
+  method?: string
+): Promise<void> {
+  const supabase = createClient();
+  await supabase
+    .from('payments')
+    .update({ status, method: method ?? null, paid_at: status === 'paid' ? new Date().toISOString() : null })
+    .eq('id', paymentId);
+}
