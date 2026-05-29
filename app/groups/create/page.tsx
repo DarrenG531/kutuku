@@ -85,9 +85,14 @@ export default function CreateGroupPage() {
     };
 
     group.rounds = generateRounds(group);
-    await saveGroup(group);
-    setLoading(false);
-    router.push(`/groups/${group.id}`);
+
+    try {
+      await saveGroup(group);
+      router.push(`/groups/${group.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+      setLoading(false);
+    }
   }
 
   if (!userName) return null;

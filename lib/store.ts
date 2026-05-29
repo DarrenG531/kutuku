@@ -128,7 +128,7 @@ async function hydrateGroup(g: Record<string, unknown>): Promise<KutuGroup> {
 export async function saveGroup(group: KutuGroup): Promise<void> {
   const supabase = createClient();
 
-  await supabase.from('kutu_groups').upsert({
+  const { error: groupErr } = await supabase.from('kutu_groups').upsert({
     id: group.id,
     name: group.name,
     description: group.description,
@@ -142,10 +142,11 @@ export async function saveGroup(group: KutuGroup): Promise<void> {
     created_by_name: group.createdByName,
     status: group.status,
   });
+  if (groupErr) throw new Error(`Failed to save group: ${groupErr.message}`);
 
   // Upsert members
   if (group.members.length) {
-    await supabase.from('members').upsert(
+    const { error: memberErr } = await supabase.from('members').upsert(
       group.members.map((m) => ({
         id: m.id,
         group_id: group.id,
@@ -155,34 +156,40 @@ export async function saveGroup(group: KutuGroup): Promise<void> {
         position: m.position,
       }))
     );
+    if (memberErr) throw new Error(`Failed to save members: ${memberErr.message}`);
   }
 
-  // Upsert rounds + payments
-  for (const round of group.rounds) {
-    await supabase.from('rounds').upsert({
-      id: round.id,
-      group_id: group.id,
-      round_number: round.roundNumber,
-      month: round.month,
-      receiver_id: round.receiverId,
-      receiver_name: round.receiverName,
-      status: round.status,
-    });
+  // Upsert rounds, then all payments in one batch
+  if (group.rounds.length) {
+    const { error: roundsErr } = await supabase.from('rounds').upsert(
+      group.rounds.map((round) => ({
+        id: round.id,
+        group_id: group.id,
+        round_number: round.roundNumber,
+        month: round.month,
+        receiver_id: round.receiverId,
+        receiver_name: round.receiverName,
+        status: round.status,
+      }))
+    );
+    if (roundsErr) throw new Error(`Failed to save rounds: ${roundsErr.message}`);
 
-    if (round.payments.length) {
-      await supabase.from('payments').upsert(
-        round.payments.map((p) => ({
-          id: p.id,
-          round_id: round.id,
-          member_id: p.memberId,
-          member_name: p.memberName,
-          amount: p.amount,
-          status: p.status,
-          method: p.method ?? null,
-          reference: p.reference ?? null,
-          paid_at: p.paidAt ?? null,
-        }))
-      );
+    const allPayments = group.rounds.flatMap((round) =>
+      round.payments.map((p) => ({
+        id: p.id,
+        round_id: round.id,
+        member_id: p.memberId,
+        member_name: p.memberName,
+        amount: p.amount,
+        status: p.status,
+        method: p.method ?? null,
+        reference: p.reference ?? null,
+        paid_at: p.paidAt ?? null,
+      }))
+    );
+    if (allPayments.length) {
+      const { error: payErr } = await supabase.from('payments').upsert(allPayments);
+      if (payErr) throw new Error(`Failed to save payments: ${payErr.message}`);
     }
   }
 }
