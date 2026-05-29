@@ -1,9 +1,7 @@
 'use client';
 
 import { createClient } from '@/lib/supabase/client';
-import { KutuGroup, Member, Round, Payment } from './types';
-import { format, addMonths } from 'date-fns';
-import { v4 as uuidv4 } from 'uuid';
+import { KutuGroup, Member, Round, Payment, PayoutDetails } from './types';
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
 
@@ -19,12 +17,83 @@ export async function getCurrentUser() {
     .single();
 
   if (!profile) return null;
-  return { id: profile.id, name: profile.name, email: user.email!, phone: profile.phone, createdAt: profile.created_at };
+  return {
+    id: profile.id,
+    name: profile.name,
+    email: user.email!,
+    phone: profile.phone,
+    createdAt: profile.created_at,
+    payoutMethod: profile.payout_method ?? undefined,
+    payoutBank: profile.payout_bank ?? undefined,
+    payoutAccount: profile.payout_account ?? undefined,
+    payoutQrUrl: profile.payout_qr_url ?? undefined,
+  };
 }
 
 export async function signOut() {
   const supabase = createClient();
   await supabase.auth.signOut();
+}
+
+// ─── Payout details ──────────────────────────────────────────────────────────
+
+export async function updatePayoutDetails(details: {
+  payoutMethod?: string;
+  payoutBank?: string;
+  payoutAccount?: string;
+  payoutQrUrl?: string;
+}): Promise<void> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({
+      payout_method: details.payoutMethod ?? null,
+      payout_bank: details.payoutBank ?? null,
+      payout_account: details.payoutAccount ?? null,
+      payout_qr_url: details.payoutQrUrl ?? null,
+    })
+    .eq('id', user.id);
+  if (error) throw new Error(error.message);
+}
+
+export async function uploadPaymentQR(file: File): Promise<string> {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const ext = file.name.split('.').pop() || 'png';
+  const path = `${user.id}/qr.${ext}`;
+
+  const { error } = await supabase.storage
+    .from('payment-qrs')
+    .upload(path, file, { upsert: true, cacheControl: '3600' });
+  if (error) throw new Error(error.message);
+
+  const { data } = supabase.storage.from('payment-qrs').getPublicUrl(path);
+  // Cache-bust so an updated QR shows immediately
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
+// All members' payout details for a group (only callable by co-members)
+export async function getGroupPayouts(groupId: string): Promise<Record<string, PayoutDetails>> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('get_group_payouts', { gid: groupId });
+  if (error || !data) return {};
+  const map: Record<string, PayoutDetails> = {};
+  for (const row of data as Record<string, unknown>[]) {
+    map[row.user_id as string] = {
+      userId: row.user_id as string,
+      name: row.name as string,
+      payoutMethod: (row.payout_method as string) ?? undefined,
+      payoutBank: (row.payout_bank as string) ?? undefined,
+      payoutAccount: (row.payout_account as string) ?? undefined,
+      payoutQrUrl: (row.payout_qr_url as string) ?? undefined,
+    };
+  }
+  return map;
 }
 
 // ─── Groups ────────────────────────────────────────────────────────────────

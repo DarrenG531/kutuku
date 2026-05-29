@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut, Plus } from 'lucide-react';
+import { LogOut, Plus, Wallet } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 export default function Navbar({ userName }: { userName: string }) {
@@ -31,6 +31,13 @@ export default function Navbar({ userName }: { userName: string }) {
           >
             <Plus size={16} />
             New Group
+          </Link>
+          <Link
+            href="/settings"
+            className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-slate-100 rounded-lg transition-colors"
+            title="Payout details"
+          >
+            <Wallet size={18} />
           </Link>
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center">

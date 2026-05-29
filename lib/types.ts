@@ -4,6 +4,19 @@ export interface User {
   email: string;
   phone?: string;
   createdAt: string;
+  payoutMethod?: string;
+  payoutBank?: string;
+  payoutAccount?: string;
+  payoutQrUrl?: string;
+}
+
+export interface PayoutDetails {
+  userId: string;
+  name: string;
+  payoutMethod?: string;
+  payoutBank?: string;
+  payoutAccount?: string;
+  payoutQrUrl?: string;
 }
 
 export interface Member {

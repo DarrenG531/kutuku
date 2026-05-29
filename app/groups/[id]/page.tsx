@@ -3,13 +3,14 @@
 import { useEffect, useState, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import {
   ArrowLeft, Copy, CheckCircle2, Clock, Users, Calendar,
-  TrendingUp, ChevronDown, ChevronUp, Share2, Trash2, UserPlus, Crown
+  TrendingUp, ChevronDown, ChevronUp, Share2, Trash2, UserPlus, Crown, Wallet, AlertCircle
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { getGroupById, deleteGroup, updatePaymentStatus } from '@/lib/store';
-import { KutuGroup, Payment } from '@/lib/types';
+import { getGroupById, deleteGroup, updatePaymentStatus, getGroupPayouts } from '@/lib/store';
+import { KutuGroup, Payment, PayoutDetails } from '@/lib/types';
 import { formatRM, getMonthLabel, getTotalPot, getRoundProgress, getOrganizerFeePerRound, getWinnerPayout, getTotalOrganizerEarnings } from '@/lib/utils';
 import Navbar from '@/components/Navbar';
 import { format } from 'date-fns';
@@ -24,6 +25,7 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
   const [expandedRound, setExpandedRound] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'rounds' | 'members'>('rounds');
   const [loading, setLoading] = useState(true);
+  const [payouts, setPayouts] = useState<Record<string, PayoutDetails>>({});
 
   useEffect(() => {
     async function load() {
@@ -40,6 +42,9 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
       setGroup(g);
       const active = g.rounds.find((r) => r.status === 'active');
       if (active) setExpandedRound(active.id);
+
+      const p = await getGroupPayouts(id);
+      setPayouts(p);
       setLoading(false);
     }
     load();
@@ -87,6 +92,16 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
   const winnerPayout = getWinnerPayout(group);
   const totalOrganizerEarnings = getTotalOrganizerEarnings(group);
   const activeRound = group.rounds.find((r) => r.status === 'active');
+
+  // Map a round's receiver (member id) to their saved payout details
+  function payoutForReceiver(receiverId: string): PayoutDetails | null {
+    const member = group!.members.find((m) => m.id === receiverId);
+    if (!member) return null;
+    return payouts[member.userId] ?? null;
+  }
+
+  const hasPayoutInfo = (p: PayoutDetails | null) =>
+    !!(p && (p.payoutAccount || p.payoutQrUrl));
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -153,7 +168,10 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
         )}
 
         {/* Active round banner */}
-        {activeRound && (
+        {activeRound && (() => {
+          const receiverPayout = payoutForReceiver(activeRound.receiverId);
+          const receiverIsMe = activeRound.receiverId === myMember?.id;
+          return (
           <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-2xl p-6 mb-8 text-white">
             <div className="text-emerald-100 text-sm font-medium mb-1">This Month — {getMonthLabel(activeRound.month)}</div>
             <div className="text-2xl font-bold mb-0.5">🎉 {activeRound.receiverName} collects {formatRM(winnerPayout)}</div>
@@ -169,8 +187,53 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
             <div className="mt-3 bg-white/20 rounded-full h-2">
               <div className="bg-white rounded-full h-2 transition-all" style={{ width: `${getRoundProgress(activeRound)}%` }} />
             </div>
+
+            {/* Where to send money */}
+            <div className="mt-5 bg-white/10 backdrop-blur rounded-xl p-4 border border-white/20">
+              {hasPayoutInfo(receiverPayout) ? (
+                <div className="flex flex-col sm:flex-row gap-4 items-start">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5 text-emerald-50 text-xs font-semibold uppercase tracking-wide mb-2">
+                      <Wallet size={13} />
+                      Send {activeRound.receiverName}&apos;s payment to
+                    </div>
+                    {receiverPayout!.payoutMethod && (
+                      <div className="text-sm"><span className="text-emerald-100">Method:</span> <strong>{receiverPayout!.payoutMethod}</strong></div>
+                    )}
+                    {receiverPayout!.payoutBank && (
+                      <div className="text-sm"><span className="text-emerald-100">Bank:</span> <strong>{receiverPayout!.payoutBank}</strong></div>
+                    )}
+                    {receiverPayout!.payoutAccount && (
+                      <div className="text-sm"><span className="text-emerald-100">Account:</span> <strong>{receiverPayout!.payoutAccount}</strong></div>
+                    )}
+                  </div>
+                  {receiverPayout!.payoutQrUrl && (
+                    <div className="bg-white rounded-lg p-2 shrink-0">
+                      <div className="relative w-28 h-28">
+                        <Image src={receiverPayout!.payoutQrUrl} alt="Payment QR" fill className="object-contain" unoptimized />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : receiverIsMe ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <AlertCircle size={16} className="text-amber-200 shrink-0" />
+                  <span className="text-emerald-50">
+                    It&apos;s your turn to collect! {' '}
+                    <Link href="/settings" className="underline font-semibold text-white">Add your payout details</Link>{' '}
+                    so members know where to pay you.
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-emerald-50">
+                  <AlertCircle size={16} className="text-amber-200 shrink-0" />
+                  <span>{activeRound.receiverName} hasn&apos;t added payout details yet.</span>
+                </div>
+              )}
+            </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Tabs */}
         <div className="flex gap-1 bg-white border border-slate-100 rounded-xl p-1 mb-6 shadow-sm w-fit">
