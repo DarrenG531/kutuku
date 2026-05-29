@@ -17,13 +17,15 @@ function AuthForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const redirectTo = searchParams.get('redirect') || '/dashboard';
+
   useEffect(() => {
     if (searchParams.get('mode') === 'signup') setMode('signup');
     // Redirect if already logged in
     supabase.auth.getUser().then(({ data }) => {
-      if (data.user) router.push('/dashboard');
+      if (data.user) router.push(redirectTo);
     });
-  }, [searchParams, router, supabase.auth]);
+  }, [searchParams, router, supabase.auth, redirectTo]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,11 +39,11 @@ function AuthForm() {
         options: { data: { name } },
       });
       if (error) { setError(error.message); setLoading(false); return; }
-      router.push('/dashboard');
+      router.push(redirectTo);
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) { setError('Invalid email or password.'); setLoading(false); return; }
-      router.push('/dashboard');
+      router.push(redirectTo);
     }
 
     setLoading(false);

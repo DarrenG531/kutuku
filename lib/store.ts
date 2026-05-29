@@ -199,6 +199,46 @@ export async function deleteGroup(id: string): Promise<void> {
   await supabase.from('kutu_groups').delete().eq('id', id);
 }
 
+export interface GroupPreview {
+  id: string;
+  name: string;
+  description: string | null;
+  monthlyAmount: number;
+  totalSlots: number;
+  organizerFeeType: 'none' | 'flat' | 'percentage';
+  organizerFeeValue: number;
+  createdByName: string;
+  memberCount: number;
+  isMember: boolean;
+}
+
+// Public preview — works for anonymous + non-member users via SECURITY DEFINER RPC
+export async function getGroupPreview(id: string): Promise<GroupPreview | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('get_group_preview', { gid: id }).single();
+  if (error || !data) return null;
+  const d = data as Record<string, unknown>;
+  return {
+    id: d.id as string,
+    name: d.name as string,
+    description: d.description as string | null,
+    monthlyAmount: Number(d.monthly_amount),
+    totalSlots: d.total_slots as number,
+    organizerFeeType: d.organizer_fee_type as GroupPreview['organizerFeeType'],
+    organizerFeeValue: Number(d.organizer_fee_value),
+    createdByName: d.created_by_name as string,
+    memberCount: Number(d.member_count),
+    isMember: d.is_member as boolean,
+  };
+}
+
+// Atomic join via SECURITY DEFINER RPC (adds member + rebuilds schedule)
+export async function joinGroup(id: string): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc('join_group', { gid: id });
+  if (error) throw new Error(error.message);
+}
+
 export async function updatePaymentStatus(
   paymentId: string,
   status: Payment['status'],
