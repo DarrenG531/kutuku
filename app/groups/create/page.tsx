@@ -3,18 +3,21 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Info, Crown } from 'lucide-react';
+import { ArrowLeft, Info, Crown, Sparkles, Lock } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { createClient } from '@/lib/supabase/client';
-import { saveGroup } from '@/lib/store';
+import { saveGroup, getMyCreatedGroupCount } from '@/lib/store';
 import { KutuGroup, Member } from '@/lib/types';
 import { generateRounds, formatRM, getOrganizerFeePerRound, getWinnerPayout, getTotalOrganizerEarnings } from '@/lib/utils';
+import { limitsFor, Plan } from '@/lib/plans';
 import Navbar from '@/components/Navbar';
 
 export default function CreateGroupPage() {
   const router = useRouter();
   const [userName, setUserName] = useState('');
   const [userId, setUserId] = useState('');
+  const [plan, setPlan] = useState<Plan>('free');
+  const [createdCount, setCreatedCount] = useState(0);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [monthlyAmount, setMonthlyAmount] = useState('');
@@ -31,9 +34,11 @@ export default function CreateGroupPage() {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/auth'); return; }
-      const { data: profile } = await supabase.from('profiles').select('name').eq('id', user.id).single();
+      const { data: profile } = await supabase.from('profiles').select('name, plan').eq('id', user.id).single();
       setUserName(profile?.name ?? user.email!.split('@')[0]);
       setUserId(user.id);
+      setPlan((profile?.plan as Plan) ?? 'free');
+      setCreatedCount(await getMyCreatedGroupCount());
       const next = new Date();
       next.setMonth(next.getMonth() + 1);
       next.setDate(1);
@@ -41,6 +46,9 @@ export default function CreateGroupPage() {
     }
     load();
   }, [router]);
+
+  const limits = limitsFor(plan);
+  const reachedGroupLimit = createdCount >= limits.maxCreatedGroups;
 
   const slots = parseInt(totalSlots) || 0;
   const amount = parseFloat(monthlyAmount) || 0;
@@ -61,7 +69,12 @@ export default function CreateGroupPage() {
     if (!userId) return;
     setError('');
 
-    if (isNaN(slots) || slots < 2 || slots > 50) { setError('Members must be between 2 and 50.'); return; }
+    if (reachedGroupLimit) {
+      setError(`Free plan allows ${limits.maxCreatedGroups} group. Upgrade to Pro to create more.`); return;
+    }
+    if (isNaN(slots) || slots < 2 || slots > limits.maxGroupMembers) {
+      setError(`Members must be between 2 and ${limits.maxGroupMembers}${plan === 'free' ? ' on the Free plan (Pro allows up to 50)' : ''}.`); return;
+    }
     if (isNaN(amount) || amount < 10) { setError('Minimum monthly amount is RM10.'); return; }
     if (organizerFeeType === 'flat' && (isNaN(feeValue) || feeValue < 0 || feeValue >= amount)) {
       setError('Flat fee must be between RM0 and less than the monthly amount.'); return;
@@ -109,6 +122,34 @@ export default function CreateGroupPage() {
 
         <h1 className="text-2xl font-bold text-slate-900 mb-1">Create a Kutu Group</h1>
         <p className="text-slate-500 mb-8">Set up your group and share the invite link with friends.</p>
+
+        {reachedGroupLimit && (
+          <div className="bg-gradient-to-r from-amber-50 to-emerald-50 border border-amber-200 rounded-2xl p-5 mb-6">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
+                <Lock size={18} className="text-amber-500" />
+              </div>
+              <div className="flex-1">
+                <div className="font-semibold text-slate-900 text-sm">You&apos;ve reached the Free plan limit</div>
+                <div className="text-slate-500 text-sm mt-0.5 mb-3">
+                  Free includes 1 group with up to 5 members. Upgrade to Pro for unlimited groups and up to 50 members each.
+                </div>
+                <Link href="/upgrade"
+                  className="inline-flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                  <Sparkles size={15} />Upgrade to Pro
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {plan === 'free' && !reachedGroupLimit && (
+          <div className="flex items-center gap-2 text-xs text-slate-400 mb-4">
+            <Info size={13} />
+            Free plan: up to 5 members per group.{' '}
+            <Link href="/upgrade" className="text-emerald-600 hover:underline">Go Pro for 50</Link>
+          </div>
+        )}
 
         {error && (
           <div className="bg-red-50 border border-red-100 text-red-600 text-sm rounded-lg px-4 py-3 mb-6">{error}</div>
@@ -239,9 +280,9 @@ export default function CreateGroupPage() {
             )}
           </div>
 
-          <button type="submit" disabled={loading}
-            className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white font-semibold py-4 rounded-xl transition-colors text-base">
-            {loading ? 'Creating...' : 'Create Group & Get Invite Link'}
+          <button type="submit" disabled={loading || reachedGroupLimit}
+            className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-4 rounded-xl transition-colors text-base">
+            {loading ? 'Creating...' : reachedGroupLimit ? 'Upgrade to create more groups' : 'Create Group & Get Invite Link'}
           </button>
         </form>
       </main>

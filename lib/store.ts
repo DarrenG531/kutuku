@@ -27,7 +27,34 @@ export async function getCurrentUser() {
     payoutBank: profile.payout_bank ?? undefined,
     payoutAccount: profile.payout_account ?? undefined,
     payoutQrUrl: profile.payout_qr_url ?? undefined,
+    plan: (profile.plan as 'free' | 'pro') ?? 'free',
+    planStatus: profile.plan_status ?? undefined,
+    planRenewsAt: profile.plan_renews_at ?? undefined,
   };
+}
+
+// Number of active groups the current user has created (for plan gating)
+export async function getMyCreatedGroupCount(): Promise<number> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('my_created_group_count');
+  if (error || data == null) return 0;
+  return Number(data);
+}
+
+// Kick off Stripe Checkout for the Pro plan
+export async function startCheckout(): Promise<string> {
+  const res = await fetch('/api/checkout', { method: 'POST' });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Could not start checkout.');
+  return json.url as string;
+}
+
+// Open the Stripe billing portal (manage/cancel)
+export async function openBillingPortal(): Promise<string> {
+  const res = await fetch('/api/portal', { method: 'POST' });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Could not open billing portal.');
+  return json.url as string;
 }
 
 export async function signOut() {

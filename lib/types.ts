@@ -8,6 +8,9 @@ export interface User {
   payoutBank?: string;
   payoutAccount?: string;
   payoutQrUrl?: string;
+  plan?: 'free' | 'pro';
+  planStatus?: string;
+  planRenewsAt?: string;
 }
 
 export interface PayoutDetails {

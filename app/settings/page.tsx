@@ -4,9 +4,11 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { ArrowLeft, Upload, CheckCircle2, Wallet, Trash2 } from 'lucide-react';
-import { getCurrentUser, updatePayoutDetails, uploadPaymentQR } from '@/lib/store';
+import { ArrowLeft, Upload, CheckCircle2, Wallet, Trash2, Crown, Sparkles } from 'lucide-react';
+import { getCurrentUser, updatePayoutDetails, uploadPaymentQR, openBillingPortal } from '@/lib/store';
+import { PRO_PRICE_RM } from '@/lib/plans';
 import Navbar from '@/components/Navbar';
+import { format } from 'date-fns';
 
 const METHODS = ['DuitNow', 'Bank Transfer', 'TNG eWallet', 'Boost', 'GrabPay'];
 const BANKS = ['Maybank', 'CIMB', 'Public Bank', 'RHB', 'Hong Leong', 'Bank Islam', 'AmBank', 'BSN', 'OCBC', 'UOB', 'Other'];
@@ -26,6 +28,10 @@ export default function SettingsPage() {
   const [qrUrl, setQrUrl] = useState('');
   const [uploading, setUploading] = useState(false);
 
+  const [plan, setPlan] = useState<'free' | 'pro'>('free');
+  const [planRenewsAt, setPlanRenewsAt] = useState<string | undefined>();
+  const [portalLoading, setPortalLoading] = useState(false);
+
   useEffect(() => {
     async function load() {
       const u = await getCurrentUser();
@@ -35,10 +41,23 @@ export default function SettingsPage() {
       setBank(u.payoutBank || '');
       setAccount(u.payoutAccount || '');
       setQrUrl(u.payoutQrUrl || '');
+      setPlan(u.plan ?? 'free');
+      setPlanRenewsAt(u.planRenewsAt);
       setLoading(false);
     }
     load();
   }, [router]);
+
+  async function handleManageBilling() {
+    setPortalLoading(true);
+    try {
+      const url = await openBillingPortal();
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open billing portal.');
+      setPortalLoading(false);
+    }
+  }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -99,9 +118,46 @@ export default function SettingsPage() {
           <ArrowLeft size={16} />Back to Dashboard
         </Link>
 
+        <h1 className="text-2xl font-bold text-slate-900 mb-6">Account Settings</h1>
+
+        {/* Subscription card */}
+        <div className={`rounded-2xl border shadow-sm p-6 mb-6 ${plan === 'pro' ? 'bg-gradient-to-r from-emerald-50 to-amber-50 border-emerald-200' : 'bg-white border-slate-100'}`}>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${plan === 'pro' ? 'bg-amber-100' : 'bg-slate-100'}`}>
+                <Crown size={22} className={plan === 'pro' ? 'text-amber-500' : 'text-slate-400'} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-900">{plan === 'pro' ? 'Pro Plan' : 'Free Plan'}</span>
+                  {plan === 'pro' && <span className="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">Active</span>}
+                </div>
+                <div className="text-sm text-slate-500 mt-0.5">
+                  {plan === 'pro'
+                    ? planRenewsAt
+                      ? `Renews ${format(new Date(planRenewsAt), 'dd MMM yyyy')} · RM${PRO_PRICE_RM}/month`
+                      : `RM${PRO_PRICE_RM}/month`
+                    : '1 group · up to 5 members each'}
+                </div>
+              </div>
+            </div>
+            {plan === 'pro' ? (
+              <button onClick={handleManageBilling} disabled={portalLoading}
+                className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors disabled:opacity-60">
+                {portalLoading ? 'Opening...' : 'Manage Billing'}
+              </button>
+            ) : (
+              <Link href="/upgrade"
+                className="inline-flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors">
+                <Sparkles size={15} />Upgrade to Pro
+              </Link>
+            )}
+          </div>
+        </div>
+
         <div className="flex items-center gap-2 mb-1">
           <Wallet size={22} className="text-emerald-500" />
-          <h1 className="text-2xl font-bold text-slate-900">Payout Details</h1>
+          <h2 className="text-xl font-bold text-slate-900">Payout Details</h2>
         </div>
         <p className="text-slate-500 mb-8">
           When it&apos;s your turn to collect, your group members will see this info so they know where to send your money. Set it once — it works across all your groups.
