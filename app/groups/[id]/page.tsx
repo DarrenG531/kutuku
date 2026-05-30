@@ -6,11 +6,11 @@ import Link from 'next/link';
 import Image from 'next/image';
 import {
   ArrowLeft, Copy, CheckCircle2, Clock, Users, Calendar,
-  TrendingUp, ChevronDown, ChevronUp, Share2, Trash2, UserPlus, Crown, Wallet, AlertCircle
+  TrendingUp, ChevronDown, ChevronUp, Share2, Trash2, UserPlus, Crown, Wallet, AlertCircle, Bell, Sparkles
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { getGroupById, deleteGroup, updatePaymentStatus, getGroupPayouts } from '@/lib/store';
-import { KutuGroup, Payment, PayoutDetails } from '@/lib/types';
+import { KutuGroup, Payment, PayoutDetails, Round } from '@/lib/types';
 import { formatRM, getMonthLabel, getTotalPot, getRoundProgress, getOrganizerFeePerRound, getWinnerPayout, getTotalOrganizerEarnings } from '@/lib/utils';
 import Navbar from '@/components/Navbar';
 import { format } from 'date-fns';
@@ -26,6 +26,7 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
   const [activeTab, setActiveTab] = useState<'rounds' | 'members'>('rounds');
   const [loading, setLoading] = useState(true);
   const [payouts, setPayouts] = useState<Record<string, PayoutDetails>>({});
+  const [plan, setPlan] = useState<'free' | 'pro'>('free');
 
   useEffect(() => {
     async function load() {
@@ -33,8 +34,9 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/auth'); return; }
 
-      const { data: profile } = await supabase.from('profiles').select('name').eq('id', user.id).single();
+      const { data: profile } = await supabase.from('profiles').select('name, plan').eq('id', user.id).single();
       setUserName(profile?.name ?? user.email!.split('@')[0]);
+      setPlan((profile?.plan as 'free' | 'pro') ?? 'free');
       setUserId(user.id);
 
       const g = await getGroupById(id);
@@ -60,6 +62,31 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
     const url = `${window.location.origin}/groups/${id}/join`;
     const msg = encodeURIComponent(`Jom join kutu group "${group?.name}"! 🤝\n\nClick link ni untuk join:\n${url}`);
     window.open(`https://wa.me/?text=${msg}`, '_blank');
+  }
+
+  // Pro feature: one-tap WhatsApp reminder for unpaid members of a round
+  function sendReminder(round: Round) {
+    if (!group) return;
+    if (plan !== 'pro') { router.push('/upgrade'); return; }
+
+    const unpaid = round.payments.filter((p) => p.status === 'pending');
+    if (unpaid.length === 0) return;
+
+    const receiverPayout = payoutForReceiver(round.receiverId);
+    const names = unpaid.map((p) => `• ${p.memberName}`).join('\n');
+
+    let payLine = `Pay to: *${round.receiverName}*`;
+    if (receiverPayout?.payoutMethod) payLine += ` (${receiverPayout.payoutMethod})`;
+    if (receiverPayout?.payoutBank) payLine += `\n${receiverPayout.payoutBank}`;
+    if (receiverPayout?.payoutAccount) payLine += `\nAcc: ${receiverPayout.payoutAccount}`;
+
+    const msg =
+      `📢 *Kutu ${group.name}* — Reminder for ${getMonthLabel(round.month)}\n\n` +
+      `Belum bayar lagi (not paid yet):\n${names}\n\n` +
+      `Amount: *${formatRM(group.monthlyAmount)}* each\n${payLine}\n\n` +
+      `Terima kasih! 🙏`;
+
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   }
 
   async function markPayment(paymentId: string, status: Payment['status']) {
@@ -187,6 +214,16 @@ export default function GroupPage({ params }: { params: Promise<{ id: string }> 
             <div className="mt-3 bg-white/20 rounded-full h-2">
               <div className="bg-white rounded-full h-2 transition-all" style={{ width: `${getRoundProgress(activeRound)}%` }} />
             </div>
+
+            {/* Reminder button (Pro) */}
+            {activeRound.payments.some((p) => p.status === 'pending') && (
+              <button onClick={() => sendReminder(activeRound)}
+                className="mt-4 inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 border border-white/30 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors backdrop-blur">
+                <Bell size={15} />
+                Remind {activeRound.payments.filter((p) => p.status === 'pending').length} unpaid via WhatsApp
+                {plan !== 'pro' && <Sparkles size={13} className="text-amber-200" />}
+              </button>
+            )}
 
             {/* Where to send money */}
             <div className="mt-5 bg-white/10 backdrop-blur rounded-xl p-4 border border-white/20">
